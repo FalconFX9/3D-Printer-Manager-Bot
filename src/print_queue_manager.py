@@ -1,8 +1,8 @@
 import re
 import time
-from print_sub import PrintSubmission
 import zipfile
-from gcode_parse import parse_gcode, parse_xml
+from src.print_sub import PrintSubmission
+from src.gcode_parse import parse_gcode, parse_xml
 
 
 class PrintQueueManager:

@@ -1,4 +1,4 @@
-from bambu_printer import BambuPrinter
+from src.bambu_printer import BambuPrinter
 
 
 class PrinterManager:
