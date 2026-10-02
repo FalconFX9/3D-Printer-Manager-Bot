@@ -10,6 +10,7 @@ import json
 
 from src.constants import *
 from src.printer import Printer
+from src.bambu_ftps import upload_file as ftps_upload
 
 
 class BambuPrinter(Printer):
@@ -45,15 +46,13 @@ class BambuPrinter(Printer):
 
         file_path = print_sub.print_attributes["file_path"]
         file_name = print_sub.print_attributes["file_name"]
-        # Load into memory
-        with open(file_path, 'rb') as f:
-            zip_buffer = io.BytesIO(f.read())
-            result = self.printer.upload_file(zip_buffer, file_name)
-            if "226" in result:
-                print(f"Failed to upload file: {file_name}")
-            else:
-                self.printer.start_print(file_name, plate_number=1)
-                print_sub.status = RUNNING
+
+        if not ftps_upload(self.printer_ip, self.access_code, file_path, file_name):
+            print(f"Failed to upload file: {file_name}")
+            return  # status stays QUEUED, so the bot's retry logic takes over
+
+        self.printer.start_print(file_name, plate_number=1)
+        print_sub.status = RUNNING
 
     def _is_h2d(self):
         return self.name.upper().startswith("H2D")
