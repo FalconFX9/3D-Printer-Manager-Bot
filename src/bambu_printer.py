@@ -47,11 +47,24 @@ class BambuPrinter(Printer):
         file_path = print_sub.print_attributes["file_path"]
         file_name = print_sub.print_attributes["file_name"]
 
-        if not ftps_upload(self.printer_ip, self.access_code, file_path, file_name):
+        if self._is_h2d():
+            # H2D: the library's upload fails with a 426, so use the standalone FTPS uploader
+            ok = ftps_upload(self.printer_ip, self.access_code, file_path, file_name)
+        else:
+            # A1 mini: bambulabs_api's own upload
+            with open(file_path, "rb") as f:
+                result = self.printer.upload_file(io.BytesIO(f.read()), file_name)
+            # The library returns the FTP reply on success and None on failure
+            ok = bool(result) and "226" in result
+
+        if not ok:
             print(f"Failed to upload file: {file_name}")
             return  # status stays QUEUED, so the bot's retry logic takes over
 
-        self.printer.start_print(file_name, plate_number=1)
+        if self._is_h2d():
+            self.printer.start_print(file_name, plate_number=1, use_ams=False, ams_mapping=[])
+        else:
+            self.printer.start_print(file_name, plate_number=1)
         print_sub.status = RUNNING
 
     def _is_h2d(self):
