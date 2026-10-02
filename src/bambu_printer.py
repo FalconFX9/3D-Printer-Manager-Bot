@@ -113,26 +113,51 @@ class BambuPrinter(Printer):
         else:
             self.printer.turn_light_off()
 
-    def save_image(self):
+    def save_image(self, out_path=None):
         if self.fake:
-            return
-
-        out_path = f"example_{self.name}.png"
+            return None
+        out_path = out_path or f"example_{self.name}.png"
 
         if self._is_h2d():
             frame = self._grab_frame_rtsp()
             if frame is not None and cv2.imwrite(out_path, frame):
                 print(f"Image saved: {out_path}")
-            else:
-                print(f"Failed to capture frame from {self.name}")
-        else:
-            # Other printers: bambulabs_api's built-in camera support
-            # self.printer.turn_light_on()
+                return out_path
+            print(f"Failed to capture frame from {self.name}")
+            return None
+
+        # Other printers: bambulabs_api's built-in camera support
+        try:
             time.sleep(0.5)
             image = self.printer.get_camera_image()
             time.sleep(0.5)
-            # self.printer.turn_light_off()
             image.save(out_path)
+            return out_path
+        except Exception as e:
+            print(f"Failed to capture frame from {self.name}: {e}")
+            return None
+
+    def get_errors(self):
+        """Active error codes as strings, e.g. ['Print error 0300_4001', 'HMS_0300_0100_0001_0001']."""
+        if self.fake:
+            return []
+        report = self.printer.mqtt_dump().get("print", {})
+        errors = []
+
+        try:
+            pe = int(report.get("print_error") or 0)
+        except (TypeError, ValueError):
+            pe = 0
+        if pe:
+            errors.append(f"Print error {pe >> 16:04X}_{pe & 0xFFFF:04X}")
+
+        for item in report.get("hms") or []:
+            try:
+                attr, code = int(item.get("attr", 0)), int(item.get("code", 0))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            errors.append(f"HMS_{attr >> 16:04X}_{attr & 0xFFFF:04X}_{code >> 16:04X}_{code & 0xFFFF:04X}")
+        return errors
 
     def get_filaments(self):
         """Return a list of dicts, one per externally loaded spool."""

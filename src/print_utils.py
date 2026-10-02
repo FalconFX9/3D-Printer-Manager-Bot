@@ -35,13 +35,8 @@ def printer_state(printer):
     return str(getattr(state, "name", state)).split(".")[-1].upper()
 
 
-def bed_is_clear(printer):
-    # TODO: hook in bed-occupancy detection (e.g. camera check) before auto-starting.
-    return True
-
-
 def check_ready(printer, attrs):
-    """Blocking. Returns (ready, notice_key, message)."""
+    """Blocking. Returns (ready, notice_key, message). The bed-clear check lives in the bot."""
     state = printer_state(printer)
     if state not in IDLE_STATES:
         return False, "busy", f"{printer.name} is busy (state: {state}). Waiting for it to be free."
@@ -58,9 +53,6 @@ def check_ready(printer, attrs):
             "Load the right filament (and set its type on the printer) and I'll start it automatically."
         )
         return False, key, msg
-
-    if not bed_is_clear(printer):
-        return False, "bed", f"The bed on {printer.name} doesn't look clear. Waiting."
 
     return True, "", ""
 
