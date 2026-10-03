@@ -237,3 +237,19 @@ class BambuPrinter(Printer):
             f"Remaining time: {remaining_time}m\n"
             f"Finish time: {finish_time_format}"
         )
+
+    def get_status_data(self):
+        """Structured status for the Discord embed."""
+        if self.fake:
+            return {"state": "RUNNING", "percentage": 10, "layer": 10, "total_layers": 100,
+                    "bed_temp": 60, "nozzle_temp": 200, "remaining_minutes": 90}
+        state = self.printer.get_state()
+        return {
+            "state": str(getattr(state, "name", state)).split(".")[-1].upper(),
+            "percentage": self.printer.get_percentage(),
+            "layer": self.printer.current_layer_num(),
+            "total_layers": self.printer.total_layer_num(),
+            "bed_temp": self.printer.get_bed_temperature(),
+            "nozzle_temp": self.printer.get_nozzle_temperature(),
+            "remaining_minutes": self.printer.get_time(),
+        }

@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import re
 import time
@@ -6,8 +7,15 @@ import time
 import discord
 
 from src import queue_store
-from src.constants import QUEUED, RUNNING, COMPLETE, REMOVED
+from src.constants import QUEUED, RUNNING, COMPLETE, REMOVED, FAILED
 from src.print_queue_manager import PrintQueueManager
+from src.embeds import (
+    display_name,
+    print_info_embed,
+    queue_embed,
+    read_plate_preview,
+    status_embed,
+)
 from src.print_sub import PrintSubmission
 from src.print_utils import (
     IDLE_STATES,
@@ -26,6 +34,8 @@ MAX_START_ATTEMPTS = 3
 KEEP_FINISHED_SECONDS = 14 * 24 * 3600           # drop non-queued entries older than this on restore
 DONE_WORDS = {"done", "finished"}                # typed in a thread: print finished, bed is clear
 CANCEL_WORDS = {"cancel"}                        # typed in a thread: remove a queued print
+RETRY_WORDS = {"retry"}                          # typed in a thread: try a failed print again
+SUBMIT_ROLES = ("3D Printer", "Exec")            # roles allowed to submit prints (case-insensitive)
 MONITOR_INTERVAL = 15                            # seconds between printer state checks (pause/fail alerts)
 ALERT_STATES = {"PAUSE", "FAILED", "FINISH"}
 PHOTO_FOLDER = os.path.join(queue_store.ROOT, ".photos")   # temp storage for finished-print photos
@@ -39,6 +49,16 @@ def is_done_message(text):
 
 def is_cancel_message(text):
     return (text or "").strip().lower().strip(".!?, ") in CANCEL_WORDS
+
+
+def is_retry_message(text):
+    return (text or "").strip().lower().strip(".!?, ") in RETRY_WORDS
+
+
+def can_submit(author):
+    """True if the message author has one of the SUBMIT_ROLES (needs a guild Member with roles)."""
+    allowed = {r.lower() for r in SUBMIT_ROLES}
+    return any(role.name.strip().lower() in allowed for role in getattr(author, "roles", []))
 
 
 def capture_photo_blocking(printer, path):
@@ -73,11 +93,6 @@ def describe_notice(key):
     if key == "offline":
         return "printer offline"
     return "waiting"
-
-
-def display_name(attrs):
-    """File name without the thread-id prefix added at download time."""
-    return re.sub(r"^\d+_", "", (attrs or {}).get("file_name") or "print")
 
 
 class PrintBot(discord.Client):
@@ -209,21 +224,26 @@ class PrintBot(discord.Client):
         if status_channel is None:
             return None
         async for message in status_channel.history(limit=100):
-            if message.author == self.user and message.content.startswith(f"**{printer_name}**"):
+            if message.author != self.user:
+                continue
+            if message.content.startswith(f"**{printer_name}**"):  # older plain-text version
+                return message
+            if message.embeds and message.embeds[0].title == printer_name:
                 return message
         return None
 
-    async def update_status_message(self, printer_name, status_text):
+    async def update_status_message(self, printer_name, status_text=None, embed=None):
+        """Create or edit the bot's message for `printer_name` (an embed, or plain text)."""
         status_channel = self.get_status_channel()
         if status_channel is None:
             print("Status channel not found.")
             return
         message = await self.get_status_message(printer_name)
-        content = f"**{printer_name}**\n{status_text}"
+        content = f"**{printer_name}**\n{status_text}" if status_text else None
         if message:
-            await message.edit(content=content)
+            await message.edit(content=content, embed=embed)
         else:
-            await status_channel.send(content)
+            await status_channel.send(content=content, embed=embed)
 
     async def say(self, sub, text, file_path=None):
         try:
@@ -272,11 +292,13 @@ class PrintBot(discord.Client):
 
         if message.attachments:
             for attachment in message.attachments:
-                await self.handle_attachment(channel, attachment)
+                await self.handle_attachment(channel, attachment, message.author)
         elif is_done_message(message.content):
             await self.handle_done(channel)
         elif is_cancel_message(message.content):
             await self.handle_cancel(channel)
+        elif is_retry_message(message.content):
+            await self.handle_retry(channel)
 
     async def handle_done(self, thread):
         """User typed 'done'/'finished': mark the print complete and the bed clear."""
@@ -291,13 +313,62 @@ class PrintBot(discord.Client):
 
         if cleared or was_running:
             self.save_queue()
-            where = f" The bed on {', '.join(cleared)} is now marked clear." if cleared else ""
-            await thread.send(f"Marked as done.{where} The next queued print will start once the printer is idle.")
+            head = "Marked as done." if was_running else "Bed marked clear."
+            where = f" The bed on {', '.join(cleared)} is now clear." if cleared else ""
+            if sub is not None and sub.status == QUEUED:  # a retry is waiting on the bed
+                tail = " Your retry will start once the printer is idle."
+            elif sub is not None and sub.status == FAILED:
+                tail = (" The next queued print will start once the printer is idle."
+                        " You can still reply `retry` to queue this one again.")
+            else:
+                tail = " The next queued print will start once the printer is idle."
+            await thread.send(f"{head}{where}{tail}")
             await self.dispatch_queue()
         elif sub is not None and sub.status == QUEUED:
             await thread.send("This print hasn't started yet, so there's nothing to mark as done.")
         elif sub is not None and sub.status == COMPLETE:
             await thread.send("This print is already marked as done.")
+        elif sub is not None and sub.status == FAILED:
+            await thread.send("The bed is already marked clear. Reply `retry` to try this print again.")
+
+    async def handle_retry(self, thread):
+        """User typed 'retry': put a failed print back in the queue, keeping its original place."""
+        sub = self.find_sub(thread)
+        if sub is None or not sub.print_attributes:
+            return
+
+        if sub.status != FAILED:
+            notes = {
+                QUEUED: "This print is still in the queue, so there's nothing to retry.",
+                RUNNING: "This print is still running.",
+                COMPLETE: "This print finished successfully. Post the file again to print it again.",
+                REMOVED: "This print was removed from the queue. Post the file again to queue it.",
+            }
+            await thread.send(notes.get(sub.status, "Nothing to retry here."))
+            return
+
+        if not os.path.exists(sub.print_attributes.get("file_path", "")):
+            sub.status = REMOVED
+            self.save_queue()
+            await thread.send("The downloaded file is gone, so I can't retry. Please post it again.")
+            await self.refresh_queue_message()
+            return
+
+        printer_name = resolve_printer_name(sub.print_attributes.get("target_printer"))
+        released = False
+        if printer_name and self.bed_blocker.get(printer_name) == thread.id:
+            del self.bed_blocker[printer_name]  # replying "retry" confirms the bed is clear
+            released = True
+
+        sub.status = QUEUED  # submission_time is unchanged, so it keeps its place in the queue
+        self.attempts.pop(id(sub), None)
+        self.notices.pop(id(sub), None)
+        self.save_queue()
+
+        note = " Treating this as confirmation that the bed is clear." if released else ""
+        await thread.send(f"Retrying `{display_name(sub.print_attributes)}`. It keeps its place in the queue "
+                          f"and will start as soon as {printer_name or 'the printer'} is ready.{note}")
+        await self.dispatch_queue()
 
     async def handle_cancel(self, thread):
         """User typed 'cancel': remove this thread's print from the queue if it hasn't started."""
@@ -307,7 +378,7 @@ class PrintBot(discord.Client):
 
         if id(sub) in self.starting:
             await thread.send("This print is being sent to the printer right now, so it can't be canceled here.")
-        elif sub.status == QUEUED:
+        elif sub.status in (QUEUED, FAILED):
             sub.status = REMOVED
             self.notices.pop(id(sub), None)
             self.attempts.pop(id(sub), None)
@@ -326,10 +397,15 @@ class PrintBot(discord.Client):
         else:
             await thread.send("This print is no longer in the queue.")
 
-    async def handle_attachment(self, thread, attachment):
+    async def handle_attachment(self, thread, attachment, author=None):
         name = os.path.basename(attachment.filename)
         if not name.lower().endswith(".gcode.3mf"):
             await thread.send(f"`{name}` ignored: please attach a sliced `.gcode.3mf` (Bambu Studio export).")
+            return
+
+        if not can_submit(author):
+            roles = " or ".join(f"`{r}`" for r in SUBMIT_ROLES)
+            await thread.send(f"Sorry, only members with the {roles} role can submit prints.")
             return
 
         existing = self.find_sub(thread)
@@ -357,15 +433,25 @@ class PrintBot(discord.Client):
         self.save_queue()
 
         attrs = sub.print_attributes or {}
-        target = resolve_printer_name(attrs.get("target_printer")) or "unknown"
-        filaments = ", ".join(f"{t} {g:g} g" for t, g in (attrs.get("filament_used") or {}).items()) or "unknown"
-        await thread.send(
-            f"Added to queue: `{name}`\n"
-            f"Target printer: {target} (from `{attrs.get('target_printer')}`)\n"
-            f"Estimated time: {fmt_duration(attrs.get('print_time'))}\n"
-            f"Filament: {filaments}\n"
-            "Reply `cancel` to remove it from the queue."
+        target = resolve_printer_name(attrs.get("target_printer"))
+        ahead = sorted(
+            (s for s in self.queue.prints
+             if s.status == QUEUED and s.print_attributes
+             and resolve_printer_name(s.print_attributes.get("target_printer")) == target),
+            key=lambda s: s.submission_time or 0,
         )
+        position = ahead.index(sub) + 1 if target and sub in ahead else None
+        preview = await asyncio.to_thread(read_plate_preview, file_path)
+        embed = print_info_embed(attrs, target, position, has_preview=preview is not None)
+        try:
+            if preview is not None:
+                await thread.send(embed=embed, file=discord.File(io.BytesIO(preview), filename="preview.png"))
+            else:
+                await thread.send(embed=embed)
+        except Exception as e:
+            print(f"Could not send print info embed: {e}")
+            await thread.send(f"Added to queue: `{name}` (printer: {target or 'unknown'}). "
+                              "Reply `cancel` to remove it.")
         await self.dispatch_queue()
 
     # ---- dispatching ----
@@ -447,8 +533,9 @@ class PrintBot(discord.Client):
 
         if sub.status != RUNNING:
             if n >= MAX_START_ATTEMPTS:
-                sub.status = REMOVED
-                await self.say(sub, f"Failed to start the print on {printer.name} after {n} attempts. Giving up.")
+                sub.status = FAILED
+                await self.say(sub, f"Failed to start the print on {printer.name} after {n} attempts. Giving up. "
+                                    "Reply `retry` to try again (it keeps its place in the queue).")
             else:
                 await self.say(sub, f"Upload/start failed on {printer.name} (attempt {n}/{MAX_START_ATTEMPTS}). Will retry.")
             return
@@ -537,12 +624,18 @@ class PrintBot(discord.Client):
             text = (f"{printer.name} is **paused** during `{file_name}`. {reason}\n"
                     "Check the printer, then resume or stop it there.")
         else:
+            sub.status = FAILED
+            self.save_queue()
             text = (f"{printer.name} reports the print **failed**: `{file_name}`. {reason}\n"
-                    "Check the printer. Once the bed is clear, reply `done` so the next print can start.")
+                    "Check the printer and clear the bed. Reply `retry` to print it again (it keeps its place "
+                    "in the queue), or `done` to release the printer for the next print.")
         await self.say(sub, text)
+        if state == "FAILED":
+            await self.refresh_queue_message()
 
     # ---- queue message ----
-    def build_queue_text(self):
+    def build_queue_sections(self):
+        """[(printer name, text)] for the queue embed."""
         names = {p.name for p in self.printer_manager.printers} | set(self.bed_blocker)
         queued = sorted(
             (s for s in self.queue.prints if s.status == QUEUED and s.print_attributes),
@@ -555,66 +648,80 @@ class PrintBot(discord.Client):
                 by_printer.setdefault(name, []).append(s)
                 names.add(name)
 
-        lines = []
+        sections = []
         for name in sorted(names):
-            lines.append(f"\n**{name}**")
+            lines = []
             blocker = self.bed_blocker.get(name)
             if blocker is None:
-                lines.append("Current: none (bed clear)")
+                lines.append("**Now:** idle, bed clear")
             else:
                 cur = next((s for s in self.queue.prints
                             if s.discord_thread is not None and s.discord_thread.id == blocker), None)
                 label = f"`{display_name(cur.print_attributes)}` " if cur is not None and cur.print_attributes else ""
                 if cur is not None and id(cur) in self.starting:
-                    lines.append(f"Current: uploading {label}(<#{blocker}>)")
+                    lines.append(f"**Now:** uploading {label}(<#{blocker}>)")
+                elif cur is not None and cur.status == FAILED:
+                    lines.append(f"**Now:** {label}(<#{blocker}>) 🔴 failed")
+                    lines.append("↳ reply `retry` there to try again, or `done` to release the printer")
                 else:
-                    lines.append(f"Current: {label}(<#{blocker}>). "
-                                 "Reply `done` there when finished and the bed is clear")
+                    lines.append(f"**Now:** {label}(<#{blocker}>)")
+                    lines.append("↳ reply `done` there when finished and the bed is clear")
 
             waiting = [s for s in by_printer.get(name, []) if s.discord_thread.id != blocker]
             if not waiting:
-                lines.append("Queue: empty")
-                continue
-            lines.append("Queue:")
-            for i, s in enumerate(waiting[:10], 1):
-                a = s.print_attributes
-                lines.append(f"{i}. `{display_name(a)}` (<#{s.discord_thread.id}>), "
-                             f"~{fmt_duration(a.get('print_time'))}, {describe_notice(self.notices.get(id(s)))}")
-            if len(waiting) > 10:
-                lines.append(f"...and {len(waiting) - 10} more")
-
-        text = "\n".join(lines).strip() or "No printers connected."
-        return text[:1900]  # Discord's limit is 2000 characters
+                lines.append("**Next up:** nothing queued")
+            else:
+                lines.append("**Next up:**")
+                for i, s in enumerate(waiting[:10], 1):
+                    a = s.print_attributes
+                    lines.append(f"{i}. `{display_name(a)}` (<#{s.discord_thread.id}>) · "
+                                 f"~{fmt_duration(a.get('print_time'))} · "
+                                 f"{describe_notice(self.notices.get(id(s)))}")
+                if len(waiting) > 10:
+                    lines.append(f"...and {len(waiting) - 10} more")
+            sections.append((name, "\n".join(lines)))
+        return sections
 
     async def refresh_queue_message(self):
         if self.get_status_channel() is None:
             return
         async with self.queue_msg_lock:
-            text = self.build_queue_text()
-            if text == self._queue_text:
+            embed = queue_embed(self.build_queue_sections())
+            state = embed.to_dict()
+            if state == self._queue_text:
                 return
             try:
-                await self.update_status_message("Print queue", text)
-                self._queue_text = text
+                await self.update_status_message("Print queue", embed=embed)
+                self._queue_text = state
             except Exception as e:
                 print(f"Queue message update failed: {e}")
 
     # ---- status messages ----
+    async def build_status_embed(self, printer):
+        getter = getattr(printer, "get_status_data", None)
+        data = text = None
+        if getter is not None:
+            data = await asyncio.to_thread(getter)
+        else:  # printer class without get_status_data(): show its plain status text
+            text = await asyncio.to_thread(printer.get_status)
+        try:
+            filaments = await asyncio.to_thread(printer.get_filaments)
+        except Exception as e:
+            print(f"Could not read filaments from {printer.name}: {e}")
+            filaments = None
+        errors = await self.get_errors(printer)
+        return status_embed(printer.name, data, filaments, errors, fallback_text=text)
+
     async def update_printers_status(self):
         await self.wait_until_ready()
         while not self.is_closed():
             for printer in self.printer_manager.printers:
                 try:
-                    status = await asyncio.to_thread(printer.get_status)
-                    filaments = await asyncio.to_thread(printer.get_filaments_text)
-                    text = f"{status}\n\n**Loaded filament**\n{filaments}"
-                    errors = await self.get_errors(printer)
-                    if errors:
-                        text += "\n\n**Errors**\n" + "\n".join(errors)
+                    embed = await self.build_status_embed(printer)
                 except Exception as e:
-                    text = f"Printer unreachable: {e}"
+                    embed = status_embed(printer.name, fallback_text=f"Printer unreachable: {e}")
                 try:
-                    await self.update_status_message(printer.name, text)
+                    await self.update_status_message(printer.name, embed=embed)
                 except Exception as e:
                     print(f"Status update failed for {printer.name}: {e}")
             await self.refresh_queue_message()
