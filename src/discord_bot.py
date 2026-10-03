@@ -618,7 +618,7 @@ class PrintBot(discord.Client):
         if errors:
             reason = "Reported: " + ", ".join(errors)
         else:
-            reason = "No error codes were reported, so it may have been paused manually or by a pause in the file."
+            reason = "No error codes were reported."
 
         if state == "PAUSE":
             text = (f"{printer.name} is **paused** during `{file_name}`. {reason}\n"
