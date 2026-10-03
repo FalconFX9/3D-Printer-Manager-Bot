@@ -26,7 +26,7 @@ from src.print_utils import (
 )
 
 DOWNLOAD_FOLDER = os.environ.get("DOWNLOAD_FOLDER", os.path.join(queue_store.ROOT, ".downloads"))
-PRINT_SUBMISSION_CHANNEL = "forum-bot-testing"   # forum channel people post prints in
+PRINT_SUBMISSION_CHANNEL = "3d-print-queue"   # forum channel people post prints in
 STATUS_CHANNEL = "3d-printer-status"             # channel holding one status message per printer
 STATUS_INTERVAL = 60                             # seconds between status message updates
 DISPATCH_INTERVAL = 30                           # seconds between retries of queued prints
