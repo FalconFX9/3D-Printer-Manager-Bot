@@ -10,5 +10,9 @@ class Printer(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def get_state(self):
+        pass
+
+    @abc.abstractmethod
     def get_status(self):
         pass

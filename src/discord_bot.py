@@ -21,7 +21,6 @@ from src.print_utils import (
     IDLE_STATES,
     check_ready,
     fmt_duration,
-    printer_state,
     resolve_printer_name,
 )
 
@@ -548,7 +547,7 @@ class PrintBot(discord.Client):
         # so the next queued job can't be sent before telemetry catches up.
         for _ in range(30):
             await asyncio.sleep(2)
-            if await asyncio.to_thread(printer_state, printer) not in IDLE_STATES:
+            if await asyncio.to_thread(printer.get_state) not in IDLE_STATES:
                 break
 
     async def dispatch_loop(self):
@@ -581,7 +580,7 @@ class PrintBot(discord.Client):
             await asyncio.sleep(MONITOR_INTERVAL)
 
     async def check_printer_alert(self, printer):
-        state = await asyncio.to_thread(printer_state, printer)
+        state = await asyncio.to_thread(printer.get_state)
         previous = self.last_state.get(printer.name)
         self.last_state[printer.name] = state
         # First poll only records the state, so a restart doesn't repeat an old alert

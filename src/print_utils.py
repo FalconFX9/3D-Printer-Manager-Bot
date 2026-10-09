@@ -27,17 +27,9 @@ def required_filament_types(attrs):
     return types
 
 
-def printer_state(printer):
-    """Current gcode state as an upper-case string ('IDLE', 'RUNNING', ...)."""
-    if printer.fake:
-        return "IDLE"
-    state = printer.printer.get_state()
-    return str(getattr(state, "name", state)).split(".")[-1].upper()
-
-
 def check_ready(printer, attrs):
     """Blocking. Returns (ready, notice_key, message). The bed-clear check lives in the bot."""
-    state = printer_state(printer)
+    state = printer.get_state()
     if state not in IDLE_STATES:
         return False, "busy", f"{printer.name} is busy (state: {state}). Waiting for it to be free."
 
