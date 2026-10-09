@@ -26,8 +26,7 @@ STATE_MAP = {
 
 class MoonrakerPrinter(Printer):
     def __init__(self, name, printer_ip, api_key=None, fake=False, port=7125,
-                 filament_type=None, light_on_gcode=None, light_off_gcode=None,
-                 webcam_name=None, timeout=10):
+                 filament_type=None, webcam_name=None, timeout=10):
         """
         filament_type:   Klipper doesn't know what's loaded. Set this (e.g. "PLA") for the bot's filament
                          check, or use Spoolman (the active spool is then used instead).
@@ -43,8 +42,6 @@ class MoonrakerPrinter(Printer):
         self.filament_type = filament_type
         self.webcam_name = webcam_name
         self.timeout = timeout
-        self._light = (light_on_gcode, light_off_gcode) if light_on_gcode and light_off_gcode else None
-        self._light_checked = self._light is not None
         self._objects = None
         self._spoolman_available = None
         if self.fake:
@@ -252,48 +249,8 @@ class MoonrakerPrinter(Printer):
             print(f"Failed to capture frame from {self.name}: {e}")
             return None
 
-    # ---- light ----
-    def _light_gcodes(self):
-        """(on, off) G-code for the light: configured, or auto-detected once from the printer's objects."""
-        if not self._light_checked:
-            self._light_checked = True
-            try:
-                self._light = self._detect_light()
-            except Exception as e:
-                print(f"{self.name}: light detection failed: {e}")
-        return self._light
-
-    def _detect_light(self):
-        objects = self._object_names()
-        for obj in objects:
-            kind, _, name = obj.partition(" ")
-            if kind == "output_pin" and any(k in name.lower() for k in ("light", "led", "lamp")):
-                return f"SET_PIN PIN={name} VALUE=1", f"SET_PIN PIN={name} VALUE=0"
-        for obj in objects:
-            kind, _, name = obj.partition(" ")
-            if kind in ("led", "neopixel", "dotstar") and name:
-                return (f"SET_LED LED={name} RED=1 GREEN=1 BLUE=1 TRANSMIT=1",
-                        f"SET_LED LED={name} RED=0 GREEN=0 BLUE=0 TRANSMIT=1")
-        return None
-
     def _run_gcode(self, script):
         self._post("/printer/gcode/script", json={"script": script})
-
-    def turn_light_on(self):
-        if self.fake:
-            return
-        gcodes = self._light_gcodes()
-        if gcodes:
-            self._run_gcode(gcodes[0])
-        else:
-            print(f"{self.name}: no light found; pass light_on_gcode / light_off_gcode to MoonrakerPrinter")
-
-    def turn_light_off(self):
-        if self.fake:
-            return
-        gcodes = self._light_gcodes()
-        if gcodes:
-            self._run_gcode(gcodes[1])
 
     # ---- filament ----
     def _filament_missing(self):

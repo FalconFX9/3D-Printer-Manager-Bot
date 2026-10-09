@@ -398,8 +398,8 @@ class PrintBot(discord.Client):
 
     async def handle_attachment(self, thread, attachment, author=None):
         name = os.path.basename(attachment.filename)
-        if not name.lower().endswith(".gcode.3mf"):
-            await thread.send(f"`{name}` ignored: please attach a sliced `.gcode.3mf` (Bambu Studio export).")
+        if not name.lower().endswith(".gcode.3mf") and not name.lower().endswith(".gcode"):
+            await thread.send(f"`{name}` ignored: please attach a sliced `.gcode.3mf` (from Bambu Studio) or `.gcode` file (from OrcaSlicer).")
             return
 
         if not can_submit(author):
@@ -433,6 +433,14 @@ class PrintBot(discord.Client):
 
         attrs = sub.print_attributes or {}
         target = resolve_printer_name(attrs.get("target_printer"))
+        if name.lower().endswith(".gcode") and "sovol" not in target.lower():
+            await thread.send(f"`{name}` is a `.gcode` file, which is only supported for the Sovol. Please export in `.gcode.3mf` format from Bambu Studio for the {target}.")
+            sub.status = REMOVED
+            self.queue.prints.remove(sub)
+            self.save_queue()
+            await self.refresh_queue_message()
+            return
+        
         ahead = sorted(
             (s for s in self.queue.prints
              if s.status == QUEUED and s.print_attributes
@@ -475,8 +483,7 @@ class PrintBot(discord.Client):
 
         if printer_name is None:
             sub.status = REMOVED
-            await self.say(sub, f"I can't tell which printer this is for (printer_model = `{model}`). "
-                                "Re-slice for the H2D or A1 mini and post it again.")
+            await self.say(sub, f"I can't tell which printer this is for (printer_model = `{model}`). ")
             return
 
         printer = self.printer_manager.get_printer_by_name(printer_name)
