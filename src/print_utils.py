@@ -12,6 +12,8 @@ def resolve_printer_name(model):
         return "H2D"
     if "a1mini" in m:
         return "A1mini"
+    if "sv08" in m:
+        return "SV08"
     return None
 
 
@@ -36,6 +38,8 @@ def check_ready(printer, attrs):
     required = required_filament_types(attrs)
     loaded = {str(f["type"]).strip().upper() for f in printer.get_filaments() if f.get("type")}
     missing = required - loaded
+    if printer.name == "SV08":
+        missing = None
     if missing:
         key = f"filament:{sorted(missing)}:{sorted(loaded)}"
         msg = (

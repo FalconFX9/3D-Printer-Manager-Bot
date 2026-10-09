@@ -10,7 +10,7 @@ from src.printer_manager import PrinterManager
 PRINTER_SETUP = [
     ("H2D", "init_H2D", "H2D"),
     ("A1mini", "init_A1mini", "A1"),
-    ("Sovol SV08", "init_Sovol", "SOVOL")
+    ("Sovol SV08", "init_Sovol", "SV08")
 ]
 
 

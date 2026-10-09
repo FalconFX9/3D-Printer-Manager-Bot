@@ -26,7 +26,7 @@ from src.print_utils import (
 
 DOWNLOAD_FOLDER = os.environ.get("DOWNLOAD_FOLDER", os.path.join(queue_store.ROOT, ".downloads"))
 PRINT_SUBMISSION_CHANNEL = "forum-bot-testing"   # forum channel people post prints in
-STATUS_CHANNEL = "3d-printer-status"             # channel holding one status message per printer
+STATUS_CHANNEL = "3d-printer-status-test"             # channel holding one status message per printer
 STATUS_INTERVAL = 60                             # seconds between status message updates
 DISPATCH_INTERVAL = 30                           # seconds between retries of queued prints
 MAX_START_ATTEMPTS = 3
@@ -433,7 +433,7 @@ class PrintBot(discord.Client):
 
         attrs = sub.print_attributes or {}
         target = resolve_printer_name(attrs.get("target_printer"))
-        if name.lower().endswith(".gcode") and "sovol" not in target.lower():
+        if name.lower().endswith(".gcode") and "sv08" not in target.lower():
             await thread.send(f"`{name}` is a `.gcode` file, which is only supported for the Sovol. Please export in `.gcode.3mf` format from Bambu Studio for the {target}.")
             sub.status = REMOVED
             self.queue.prints.remove(sub)

@@ -15,7 +15,7 @@ class PrinterManager:
         self.printers.append(bambu_printer)
 
     def init_Sovol(self, printer_ip):
-        moonraker_printer = MoonrakerPrinter("Sovol", printer_ip, fake=False, filament_type="PLA")
+        moonraker_printer = MoonrakerPrinter("Sovol", printer_ip, fake=False, filament_type="IDK")
         self.printers.append(moonraker_printer)
 
     def get_printer_by_name(self, name):
