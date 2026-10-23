@@ -12,6 +12,8 @@ def resolve_printer_name(model):
         return "H2D"
     if "a1mini" in m:
         return "A1mini"
+    if "sv08" in m:
+        return "SV08"
     return None
 
 
@@ -27,23 +29,17 @@ def required_filament_types(attrs):
     return types
 
 
-def printer_state(printer):
-    """Current gcode state as an upper-case string ('IDLE', 'RUNNING', ...)."""
-    if printer.fake:
-        return "IDLE"
-    state = printer.printer.get_state()
-    return str(getattr(state, "name", state)).split(".")[-1].upper()
-
-
 def check_ready(printer, attrs):
     """Blocking. Returns (ready, notice_key, message). The bed-clear check lives in the bot."""
-    state = printer_state(printer)
+    state = printer.get_state()
     if state not in IDLE_STATES:
         return False, "busy", f"{printer.name} is busy (state: {state}). Waiting for it to be free."
 
     required = required_filament_types(attrs)
     loaded = {str(f["type"]).strip().upper() for f in printer.get_filaments() if f.get("type")}
     missing = required - loaded
+    if printer.name == "SV08":
+        missing = None
     if missing:
         key = f"filament:{sorted(missing)}:{sorted(loaded)}"
         msg = (

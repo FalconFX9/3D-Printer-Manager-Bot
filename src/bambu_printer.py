@@ -39,6 +39,11 @@ class BambuPrinter(Printer):
         else:
             self.printer.disconnect()
 
+    def get_state(self):
+        if self.fake: return "IDLE"
+        state = self.printer.get_state()
+        return str(getattr(state, "name", state)).split(".")[-1].upper()
+
     def upload_and_start_print(self, print_sub):
         if self.fake:
             print_sub.status = RUNNING
