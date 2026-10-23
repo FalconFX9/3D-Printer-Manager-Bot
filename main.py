@@ -5,6 +5,7 @@ import discord
 
 from src.discord_bot import PrintBot
 from src.printer_manager import PrinterManager
+from src.constants import *
 
 # (name, PrinterManager init method, env var prefix)
 PRINTER_SETUP = [
@@ -53,5 +54,5 @@ if __name__ == "__main__":
     intents = discord.Intents.default()
     intents.guilds = True
     intents.message_content = True
-
-    PrintBot(printer_manager=printer_manager, intents=intents).run(env("BOT_TOKEN"))
+    token = env("BOT_DEV_TOKEN") if DEV_MODE else env("BOT_TOKEN")
+    PrintBot(printer_manager=printer_manager, intents=intents).run(token)

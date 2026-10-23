@@ -7,7 +7,7 @@ import time
 import discord
 
 from src import queue_store
-from src.constants import QUEUED, RUNNING, COMPLETE, REMOVED, FAILED
+from src.constants import QUEUED, RUNNING, COMPLETE, REMOVED, FAILED, DEV_MODE
 from src.print_queue_manager import PrintQueueManager
 from src.embeds import (
     display_name,
@@ -25,8 +25,8 @@ from src.print_utils import (
 )
 
 DOWNLOAD_FOLDER = os.environ.get("DOWNLOAD_FOLDER", os.path.join(queue_store.ROOT, ".downloads"))
-PRINT_SUBMISSION_CHANNEL = "forum-bot-testing"   # forum channel people post prints in
-STATUS_CHANNEL = "3d-printer-status-test"             # channel holding one status message per printer
+PRINT_SUBMISSION_CHANNEL = "forum-bot-testing" if DEV_MODE else "3d-print-queue"   # forum channel people post prints in
+STATUS_CHANNEL = "3d-printer-status-test" if DEV_MODE else "3d-printer-status"     # channel holding one status message per printer
 STATUS_INTERVAL = 60                             # seconds between status message updates
 DISPATCH_INTERVAL = 30                           # seconds between retries of queued prints
 MAX_START_ATTEMPTS = 3
@@ -34,6 +34,7 @@ KEEP_FINISHED_SECONDS = 14 * 24 * 3600           # drop non-queued entries older
 DONE_WORDS = {"done", "finished"}                # typed in a thread: print finished, bed is clear
 CANCEL_WORDS = {"cancel"}                        # typed in a thread: remove a queued print
 RETRY_WORDS = {"retry"}                          # typed in a thread: try a failed print again
+PRIORITY_EMOJIS = ("0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣")
 SUBMIT_ROLES = ("3D Printer", "Exec")            # roles allowed to submit prints (case-insensitive)
 MONITOR_INTERVAL = 15                            # seconds between printer state checks (pause/fail alerts)
 ALERT_STATES = {"PAUSE", "FAILED", "FINISH"}
@@ -52,6 +53,10 @@ def is_cancel_message(text):
 
 def is_retry_message(text):
     return (text or "").strip().lower().strip(".!?, ") in RETRY_WORDS
+
+
+def is_number_emoji(reaction):
+    return str(reaction) in PRIORITY_EMOJIS
 
 
 def can_submit(author):
@@ -151,6 +156,7 @@ class PrintBot(discord.Client):
             records.append({
                 "thread_id": s.discord_thread.id,
                 "submission_time": s.submission_time,
+                "priority": s.priority,
                 "status": s.status,
                 "print_attributes": s.print_attributes,
                 "notice": self.notices.get(id(s)),
@@ -171,6 +177,7 @@ class PrintBot(discord.Client):
         for rec in data["prints"]:
             status = rec.get("status", QUEUED)
             submitted = rec.get("submission_time")
+            priority = rec.get("priority", 5)
             if status != QUEUED and submitted and now - submitted > KEEP_FINISHED_SECONDS:
                 continue  # old finished/removed entry, let it go
 
@@ -184,6 +191,7 @@ class PrintBot(discord.Client):
             sub = PrintSubmission()
             sub.discord_thread = thread
             sub.submission_time = submitted
+            sub.priority = priority
             sub.print_attributes = rec.get("print_attributes")
             sub.status = status
             if rec.get("notice") is not None:
@@ -298,6 +306,29 @@ class PrintBot(discord.Client):
             await self.handle_cancel(channel)
         elif is_retry_message(message.content):
             await self.handle_retry(channel)
+
+    async def on_reaction_add(self, reaction, user):
+        if user == self.user: return
+        message = reaction.message
+        channel = message.channel
+        if (
+                    channel.type != discord.ChannelType.public_thread
+                    or channel.parent is None
+                    or channel.parent.name != PRINT_SUBMISSION_CHANNEL
+        ):
+            return
+
+        if is_number_emoji(reaction):
+            sub = self.find_sub(channel)
+            if sub is None or not sub.print_attributes:
+                return
+
+            sub.priority = PRIORITY_EMOJIS.index(str(reaction))
+            print(f"Set priority of {display_name(sub.print_attributes)} to {sub.priority} in thread {channel.id}")
+            self.save_queue()
+            await self.refresh_queue_message()
+
+        
 
     async def handle_done(self, thread):
         """User typed 'done'/'finished': mark the print complete and the bed clear."""
@@ -445,7 +476,7 @@ class PrintBot(discord.Client):
             (s for s in self.queue.prints
              if s.status == QUEUED and s.print_attributes
              and resolve_printer_name(s.print_attributes.get("target_printer")) == target),
-            key=lambda s: s.submission_time or 0,
+            key=lambda s: (s.priority, s.submission_time or 0),
         )
         position = ahead.index(sub) + 1 if target and sub in ahead else None
         preview = await asyncio.to_thread(read_plate_preview, file_path)
@@ -465,7 +496,7 @@ class PrintBot(discord.Client):
     async def dispatch_queue(self):
         async with self.dispatch_lock:
             queued = [s for s in self.queue.prints if s.status == QUEUED and s.print_attributes]
-            queued.sort(key=lambda s: s.submission_time or 0)
+            queued.sort(key=lambda s: (s.priority, s.submission_time or 0))
             for sub in queued:
                 try:
                     await self.try_dispatch(sub)
@@ -645,7 +676,7 @@ class PrintBot(discord.Client):
         names = {p.name for p in self.printer_manager.printers} | set(self.bed_blocker)
         queued = sorted(
             (s for s in self.queue.prints if s.status == QUEUED and s.print_attributes),
-            key=lambda s: s.submission_time or 0,
+            key=lambda s: (s.priority, s.submission_time or 0),
         )
         by_printer = {}
         for s in queued:
