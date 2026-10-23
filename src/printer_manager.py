@@ -1,4 +1,5 @@
 from src.bambu_printer import BambuPrinter
+from src.moonraker_printer import MoonrakerPrinter
 
 
 class PrinterManager:
@@ -12,6 +13,10 @@ class PrinterManager:
     def init_A1mini(self, printer_ip, serial, access_code):
         bambu_printer = BambuPrinter("A1mini", printer_ip, serial, access_code, fake=False)
         self.printers.append(bambu_printer)
+
+    def init_Sovol(self, printer_ip):
+        moonraker_printer = MoonrakerPrinter("SV08", printer_ip, fake=False, filament_type="IDK")
+        self.printers.append(moonraker_printer)
 
     def get_printer_by_name(self, name):
         for printer in self.printers:

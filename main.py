@@ -5,11 +5,13 @@ import discord
 
 from src.discord_bot import PrintBot
 from src.printer_manager import PrinterManager
+from src.constants import *
 
 # (name, PrinterManager init method, env var prefix)
 PRINTER_SETUP = [
     ("H2D", "init_H2D", "H2D"),
     ("A1mini", "init_A1mini", "A1"),
+    ("Sovol SV08", "init_Sovol", "SV08")
 ]
 
 
@@ -26,11 +28,19 @@ def connect_printers(manager):
         access_code = os.environ.get(f"{prefix}_ACCESS_CODE")
         serial = os.environ.get(f"{prefix}_SERIAL")
         if not (ip and access_code and serial):
-            print(f"Skipping {name}: {prefix}_IP / _ACCESS_CODE / _SERIAL not all set")
-            continue
+            if "Sovol" in name and ip:
+                # Sovol doesn't need an access code or serial, so allow it to connect with just the IP
+                access_code = None
+                serial = None
+            else:
+                print(f"Skipping {name}: {prefix}_IP / _ACCESS_CODE / _SERIAL not all set")
+                continue
         try:
             # NOTE: positional order is (ip, access_code, serial)
-            getattr(manager, init_method)(ip, access_code, serial)
+            if init_method == "init_Sovol":
+                getattr(manager, init_method)(ip)
+            else:
+                getattr(manager, init_method)(ip, access_code, serial)
             print(f"{name} connected")
         except Exception as e:
             print(f"Failed to connect to {name}: {e}")
@@ -44,5 +54,5 @@ if __name__ == "__main__":
     intents = discord.Intents.default()
     intents.guilds = True
     intents.message_content = True
-
-    PrintBot(printer_manager=printer_manager, intents=intents).run(env("BOT_TOKEN"))
+    token = env("BOT_DEV_TOKEN") if DEV_MODE else env("BOT_TOKEN")
+    PrintBot(printer_manager=printer_manager, intents=intents).run(token)
