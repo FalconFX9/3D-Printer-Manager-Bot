@@ -1,9 +1,10 @@
 """Tiny JSON persistence for the print queue and bed state (survives restarts)."""
 import json
 import os
+from src.constants import DEV_MODE
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
-QUEUE_FILE = os.environ.get("QUEUE_FILE", os.path.join(ROOT, ".queue.json"))
+QUEUE_FILE = os.environ.get("QUEUE_FILE", os.path.join(ROOT, ".queue_dev.json" if DEV_MODE else ".queue.json"))
 
 
 def _empty():
