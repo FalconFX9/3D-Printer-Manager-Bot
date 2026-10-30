@@ -7,10 +7,37 @@ import datetime
 import io
 import time
 import json
+import zipfile
+import xml.etree.ElementTree as ET
 
 from src.constants import *
 from src.printer import Printer
 from src.bambu_ftps import upload_file as ftps_upload
+
+
+# H2D external spool ids as used in print commands (from Bambu Studio's source):
+# the spool feeding the left nozzle is 254, the one feeding the right nozzle is 255.
+# A sliced file's filament_maps uses 1 = left nozzle, 2 = right nozzle.
+H2D_EXTERNAL_SPOOL = {1: 254, 2: 255}
+
+
+def read_h2d_job_info(file_path):
+    """From a sliced .gcode.3mf: ([nozzle per filament: 1=left, 2=right], bed_type). Either may be empty/None."""
+    filament_maps, bed_type = [], None
+    try:
+        with zipfile.ZipFile(file_path) as z:
+            names = z.namelist()
+            if "Metadata/slice_info.config" in names:
+                root = ET.fromstring(z.read("Metadata/slice_info.config"))
+                for meta in root.iter("metadata"):
+                    if meta.get("key") == "filament_maps":
+                        filament_maps = [int(v) for v in meta.get("value", "").split()]
+                        break
+            if "Metadata/plate_1.json" in names:
+                bed_type = json.loads(z.read("Metadata/plate_1.json")).get("bed_type")
+    except Exception as e:
+        print(f"Could not read job info from {file_path}: {e}")
+    return filament_maps, bed_type
 
 
 class BambuPrinter(Printer):
@@ -60,10 +87,55 @@ class BambuPrinter(Printer):
             return  # status stays QUEUED, so the bot's retry logic takes over
 
         if self._is_h2d():
-            self.printer.start_print(file_name, plate_number=1, use_ams=False, ams_mapping=[])
+            if not self._start_print_h2d(file_name, file_path):
+                print(f"Failed to start print: {file_name}")
+                return  # status stays QUEUED, so the bot's retry logic takes over
         else:
             self.printer.start_print(file_name, plate_number=1, use_ams=False, ams_mapping=[])
         print_sub.status = RUNNING
+
+    def _start_print_h2d(self, file_name, file_path):
+        """Start a print on the dual-nozzle H2D.
+
+        bambulabs_api's start_print can't say which nozzle a filament belongs to, so the printer falls back
+        to its default (right) nozzle. Like Bambu Studio, map each filament to the external spool of the
+        nozzle the file was sliced for. Returns True if the command was published.
+        """
+        filament_maps, bed_type = read_h2d_job_info(file_path)
+        spools = [H2D_EXTERNAL_SPOOL.get(m) for m in filament_maps]
+
+        if not spools or None in spools:
+            print(f"{self.name}: no usable filament_maps in {file_name} ({filament_maps}); "
+                  "starting without a nozzle mapping")
+            return bool(self.printer.start_print(file_name, plate_number=1, use_ams=False, ams_mapping=[]))
+
+        payload = {
+            "print": {
+                "command": "project_file",
+                "param": "Metadata/plate_1.gcode",
+                "file": file_name,
+                "url": f"ftp:///{file_name}",
+                "bed_type": bed_type or "textured_plate",
+                "bed_leveling": True,
+                "flow_cali": True,
+                "vibration_cali": True,
+                "layer_inspect": False,
+                "timelapse": False,
+                "sequence_id": "10000000",
+                "use_ams": False,
+                "ams_mapping": [-1] * len(spools),  # -1 = external spool
+                "ams_mapping2": [{"ams_id": spool, "slot_id": 0} for spool in spools],
+                "skip_objects": None,
+            }
+        }
+        print(f"{self.name}: start command: {json.dumps(payload)}")
+
+        client = self.printer.mqtt_client
+        paho = getattr(client, "_client", None) or getattr(client, "client", None)
+        topic = getattr(client, "command_topic", f"device/{self.serial}/request")
+        info = paho.publish(topic, json.dumps(payload))
+        info.wait_for_publish(timeout=10)
+        return info.is_published()
 
     def _is_h2d(self):
         return self.name.upper().startswith("H2D")
