@@ -62,7 +62,7 @@ def format_filaments(filaments):
     return "\n".join(lines)
 
 
-def status_embed(name, data=None, filaments=None, errors=None, fallback_text=None):
+def status_embed(name, data=None, filaments=None, errors=None, fallback_text=None, status_img=None):
     """data: dict from BambuPrinter.get_status_data(), or None to show fallback_text instead."""
     state = (data or {}).get("state", "UNKNOWN")
     emoji, color, label = STATE_STYLE.get(state, ("⚫", 0x7F8C8D, str(state).title()))
@@ -103,6 +103,9 @@ def status_embed(name, data=None, filaments=None, errors=None, fallback_text=Non
                             value=f"{fmt_duration(remaining * 60)}\nDone around <t:{eta}:{style}>", inline=True)
 
     embed.add_field(name="Filament", value=format_filaments(filaments), inline=False)
+
+    if status_img:
+        embed.set_image(url="attachment://status.png")
     if errors:
         embed.add_field(name="Errors", value="```\n" + "\n".join(errors)[:1000] + "\n```", inline=False)
     return embed

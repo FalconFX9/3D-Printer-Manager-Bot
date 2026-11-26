@@ -239,7 +239,7 @@ class PrintBot(discord.Client):
                 return message
         return None
 
-    async def update_status_message(self, printer_name, status_text=None, embed=None):
+    async def update_status_message(self, printer_name, status_text=None, embed=None, img=None):
         """Create or edit the bot's message for `printer_name` (an embed, or plain text)."""
         status_channel = self.get_status_channel()
         if status_channel is None:
@@ -248,9 +248,12 @@ class PrintBot(discord.Client):
         message = await self.get_status_message(printer_name)
         content = f"**{printer_name}**\n{status_text}" if status_text else None
         if message:
-            await message.edit(content=content, embed=embed)
+            if img:
+                await message.edit(content=content, embed=embed, attachments=[discord.File(io.BytesIO(open(img, "rb").read()), filename="status.png")])
+            else:
+                await message.edit(content=content, embed=embed)
         else:
-            await status_channel.send(content=content, embed=embed)
+            await status_channel.send(content=content, embed=embed, file=discord.File(io.BytesIO(open(img, "rb").read()), filename="status.png")) if img else await status_channel.send(content=content, embed=embed)
 
     async def say(self, sub, text, file_path=None):
         try:
@@ -268,6 +271,18 @@ class PrintBot(discord.Client):
         """Photo of the printer's camera view, or None if it couldn't be captured in time."""
         os.makedirs(PHOTO_FOLDER, exist_ok=True)
         path = os.path.join(PHOTO_FOLDER, f"{sub.discord_thread.id}_finished.png")
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(capture_photo_blocking, printer, path), timeout=PHOTO_TIMEOUT
+            )
+        except Exception as e:
+            print(f"Could not capture photo from {printer.name}: {e!r}")
+            return None
+
+    async def capture_printer_photo(self, printer):
+        """Photo of the printer's camera view, or None if it couldn't be captured in time."""
+        os.makedirs(PHOTO_FOLDER, exist_ok=True)
+        path = os.path.join(PHOTO_FOLDER, f"{printer.name}_status.png")
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(capture_photo_blocking, printer, path), timeout=PHOTO_TIMEOUT
@@ -756,9 +771,10 @@ class PrintBot(discord.Client):
                 try:
                     embed = await self.build_status_embed(printer)
                 except Exception as e:
-                    embed = status_embed(printer.name, fallback_text=f"Printer unreachable: {e}")
+                    status_img = await self.capture_printer_photo(printer)
+                    embed = status_embed(printer.name, fallback_text=f"Printer unreachable: {e}", status_img=status_img)
                 try:
-                    await self.update_status_message(printer.name, embed=embed)
+                    await self.update_status_message(printer.name, embed=embed, img=status_img)
                 except Exception as e:
                     print(f"Status update failed for {printer.name}: {e}")
             await self.refresh_queue_message()
