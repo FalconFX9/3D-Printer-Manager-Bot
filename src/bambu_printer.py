@@ -138,8 +138,21 @@ class BambuPrinter(Printer):
         return info.is_published()
 
     def _get_h2d_nozzle_temps(self):
-        data = self.printer.mqtt_dump().get("print", {}).get("nozzle_temp", {})
-        print(f"{self.name}: nozzle_temp data: {data}")
+        """{'left': {'current': 159, 'target': 88}, 'right': {...}, 'active': 'right'}; a side is None if not reported."""
+        report = self.printer.mqtt_dump().get("print", {})
+        extruder = (report.get("device") or {}).get("extruder") or {}
+        side = {0: "right", 1: "left"}
+
+        temps = {}
+        for entry in extruder.get("info") or []:
+            name, packed = side.get(entry.get("id")), entry.get("temp")
+            if name and isinstance(packed, int):
+                temps[name] = {"current": packed & 0xFFFF, "target": (packed >> 16) & 0xFFFF}
+
+        state = extruder.get("state")
+        active = side.get((state >> 4) & 0xF) if isinstance(state, int) else None
+        print({"left": temps.get("left"), "right": temps.get("right"), "active": active})
+        return {"left": temps.get("left"), "right": temps.get("right"), "active": active}
 
     def _is_h2d(self):
         return self.name.upper().startswith("H2D")
