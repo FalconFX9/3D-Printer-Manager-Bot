@@ -62,7 +62,7 @@ def format_filaments(filaments):
     return "\n".join(lines)
 
 
-def status_embed(name, data=None, filaments=None, errors=None, fallback_text=None):
+def status_embed(name, data=None, filaments=None, errors=None, fallback_text=None, status_img=None):
     """data: dict from BambuPrinter.get_status_data(), or None to show fallback_text instead."""
     state = (data or {}).get("state", "UNKNOWN")
     emoji, color, label = STATE_STYLE.get(state, ("⚫", 0x7F8C8D, str(state).title()))
@@ -87,11 +87,14 @@ def status_embed(name, data=None, filaments=None, errors=None, fallback_text=Non
             embed.add_field(name="Progress", value="\n".join(lines), inline=False)
 
         temps = []
-        bed, nozzle = _num(data.get("bed_temp")), _num(data.get("nozzle_temp"))
+        bed, nozzle = _num(data.get("bed_temp")), data.get("nozzle_temp")
         if bed is not None:
             temps.append(f"Bed `{bed:.0f}°C`")
         if nozzle is not None:
-            temps.append(f"Nozzle `{nozzle:.0f}°C`")
+            if isinstance(nozzle, dict):
+                temps.append(f"Left: `{nozzle.get('left', {}).get('current', 0):.0f}°C`, Right: `{nozzle.get('right', {}).get('current', 0):.0f}°C`, Active: `{nozzle.get('active', 'None')}`")
+            else:
+                temps.append(f"Nozzle `{float(nozzle):.0f}°C`")
         if temps:
             embed.add_field(name="Temperatures", value="\n".join(temps), inline=True)
 
@@ -103,6 +106,9 @@ def status_embed(name, data=None, filaments=None, errors=None, fallback_text=Non
                             value=f"{fmt_duration(remaining * 60)}\nDone around <t:{eta}:{style}>", inline=True)
 
     embed.add_field(name="Filament", value=format_filaments(filaments), inline=False)
+
+    if status_img:
+        embed.set_image(url="attachment://status.png")
     if errors:
         embed.add_field(name="Errors", value="```\n" + "\n".join(errors)[:1000] + "\n```", inline=False)
     return embed

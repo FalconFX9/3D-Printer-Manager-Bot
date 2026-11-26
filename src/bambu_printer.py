@@ -137,6 +137,22 @@ class BambuPrinter(Printer):
         info.wait_for_publish(timeout=10)
         return info.is_published()
 
+    def _get_h2d_nozzle_temps(self):
+        """{'left': {'current': 159, 'target': 88}, 'right': {...}, 'active': 'right'}; a side is None if not reported."""
+        report = self.printer.mqtt_dump().get("print", {})
+        extruder = (report.get("device") or {}).get("extruder") or {}
+        side = {0: "right", 1: "left"}
+
+        temps = {}
+        for entry in extruder.get("info") or []:
+            name, packed = side.get(entry.get("id")), entry.get("temp")
+            if name and isinstance(packed, int):
+                temps[name] = {"current": packed & 0xFFFF, "target": (packed >> 16) & 0xFFFF}
+
+        state = extruder.get("state")
+        active = side.get((state >> 4) & 0xF) if isinstance(state, int) else None
+        return {"left": temps.get("left"), "right": temps.get("right"), "active": active}
+
     def _is_h2d(self):
         return self.name.upper().startswith("H2D")
 
@@ -321,12 +337,14 @@ class BambuPrinter(Printer):
             return {"state": "RUNNING", "percentage": 10, "layer": 10, "total_layers": 100,
                     "bed_temp": 60, "nozzle_temp": 200, "remaining_minutes": 90}
         state = self.printer.get_state()
+        if self._is_h2d():
+            self._get_h2d_nozzle_temps()  # prints the data to console for debugging
         return {
             "state": str(getattr(state, "name", state)).split(".")[-1].upper(),
             "percentage": self.printer.get_percentage(),
             "layer": self.printer.current_layer_num(),
             "total_layers": self.printer.total_layer_num(),
             "bed_temp": self.printer.get_bed_temperature(),
-            "nozzle_temp": self.printer.get_nozzle_temperature(),
+            "nozzle_temp": self.printer.get_nozzle_temperature() if not self._is_h2d() else self._get_h2d_nozzle_temps(),
             "remaining_minutes": self.printer.get_time(),
         }
