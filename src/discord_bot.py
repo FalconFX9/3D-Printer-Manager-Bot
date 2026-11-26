@@ -768,11 +768,12 @@ class PrintBot(discord.Client):
         await self.wait_until_ready()
         while not self.is_closed():
             for printer in self.printer_manager.printers:
+                status_img = None
                 try:
-                    embed = await self.build_status_embed(printer)
-                except Exception as e:
                     status_img = await self.capture_printer_photo(printer)
-                    embed = status_embed(printer.name, fallback_text=f"Printer unreachable: {e}", status_img=status_img)
+                    embed = await self.build_status_embed(printer, status_img=status_img)
+                except Exception as e:
+                    embed = status_embed(printer.name, fallback_text=f"Printer unreachable: {e}")
                 try:
                     await self.update_status_message(printer.name, embed=embed, img=status_img)
                 except Exception as e:
