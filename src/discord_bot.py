@@ -749,7 +749,7 @@ class PrintBot(discord.Client):
                 print(f"Queue message update failed: {e}")
 
     # ---- status messages ----
-    async def build_status_embed(self, printer):
+    async def build_status_embed(self, printer, status_img=None):
         getter = getattr(printer, "get_status_data", None)
         data = text = None
         if getter is not None:
@@ -762,7 +762,7 @@ class PrintBot(discord.Client):
             print(f"Could not read filaments from {printer.name}: {e}")
             filaments = None
         errors = await self.get_errors(printer)
-        return status_embed(printer.name, data, filaments, errors, fallback_text=text)
+        return status_embed(printer.name, data, filaments, errors, fallback_text=text, status_img=status_img)
 
     async def update_printers_status(self):
         await self.wait_until_ready()
