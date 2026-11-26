@@ -151,7 +151,6 @@ class BambuPrinter(Printer):
 
         state = extruder.get("state")
         active = side.get((state >> 4) & 0xF) if isinstance(state, int) else None
-        print({"left": temps.get("left"), "right": temps.get("right"), "active": active})
         return {"left": temps.get("left"), "right": temps.get("right"), "active": active}
 
     def _is_h2d(self):
@@ -346,6 +345,6 @@ class BambuPrinter(Printer):
             "layer": self.printer.current_layer_num(),
             "total_layers": self.printer.total_layer_num(),
             "bed_temp": self.printer.get_bed_temperature(),
-            "nozzle_temp": self.printer.get_nozzle_temperature(),
+            "nozzle_temp": self.printer.get_nozzle_temperature() if not self._is_h2d() else self._get_h2d_nozzle_temps(),
             "remaining_minutes": self.printer.get_time(),
         }

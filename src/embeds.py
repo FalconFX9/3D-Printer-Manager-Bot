@@ -91,7 +91,10 @@ def status_embed(name, data=None, filaments=None, errors=None, fallback_text=Non
         if bed is not None:
             temps.append(f"Bed `{bed:.0f}°C`")
         if nozzle is not None:
-            temps.append(f"Nozzle `{nozzle:.0f}°C`")
+            if isinstance(nozzle, (dict)):
+                temps.append(f"Left: `{nozzle.get('left', {}).get('current', 0):.0f}°C`, Right: `{nozzle.get('right', {}).get('current', 0):.0f}°C`, Active: `{nozzle.get('active', 'None')}`")
+            else:
+                temps.append(f"Nozzle `{nozzle:.0f}°C`")
         if temps:
             embed.add_field(name="Temperatures", value="\n".join(temps), inline=True)
 
