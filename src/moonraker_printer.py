@@ -322,3 +322,11 @@ class MoonrakerPrinter(Printer):
             + (f", {f['remain_pct']}% left" if f["remain_pct"] not in (None, -1) else "")
             for f in items
         )
+
+    def turn_light_off(self):
+        # Fake function to avoid error
+        pass
+
+    def turn_light_on(self):
+        # Fake function to avoid error
+        pass

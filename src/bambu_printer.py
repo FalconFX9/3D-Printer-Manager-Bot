@@ -137,6 +137,10 @@ class BambuPrinter(Printer):
         info.wait_for_publish(timeout=10)
         return info.is_published()
 
+    def _get_h2d_nozzle_temps(self):
+        data = self.printer.mqtt_dump().get("print", {}).get("nozzle_temp", {})
+        print(f"{self.name}: nozzle_temp data: {data}")
+
     def _is_h2d(self):
         return self.name.upper().startswith("H2D")
 
@@ -321,6 +325,8 @@ class BambuPrinter(Printer):
             return {"state": "RUNNING", "percentage": 10, "layer": 10, "total_layers": 100,
                     "bed_temp": 60, "nozzle_temp": 200, "remaining_minutes": 90}
         state = self.printer.get_state()
+        if self._is_h2d():
+            self._get_h2d_nozzle_temps()  # prints the data to console for debugging
         return {
             "state": str(getattr(state, "name", state)).split(".")[-1].upper(),
             "percentage": self.printer.get_percentage(),
